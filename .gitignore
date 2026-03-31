@@ -1,8 +1,9 @@
 node_modules
-frontend/node_modules
-frontend/dist
-__pycache__
-*.pyc
+apps/*/node_modules
+apps/obs-overlay/dist
+apps/desktop-host/dist
 .DS_Store
 .env
-frontend/.env
+__pycache__
+*.pyc
+apps/desktop-host/src-tauri/target
