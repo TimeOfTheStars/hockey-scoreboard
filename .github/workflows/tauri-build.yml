@@ -1,7 +1,3 @@
-# Сборка на трёх ОС + job publish: прикрепляет .exe / .msi / .dmg / .deb / AppImage к GitHub Release.
-# Версия релиза берётся из apps/desktop-host/package.json — держи её в ногу с src-tauri/tauri.conf.json и Cargo.toml.
-# main → релиз v{version}; dev → prerelease v{version}-dev
-
 name: Desktop release
 
 on:
@@ -24,15 +20,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-22.04]
+
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: npm
@@ -78,54 +75,40 @@ jobs:
         env:
           CI: true
 
-      - name: Upload Windows installers
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+      - name: Upload bundles
+        uses: actions/upload-artifact@v7
         with:
-          name: tauri-windows
+          name: tauri-${{ matrix.os }}
           path: |
             apps/desktop-host/src-tauri/target/release/bundle/**/*.exe
             apps/desktop-host/src-tauri/target/release/bundle/**/*.msi
-          if-no-files-found: error
-
-      - name: Upload macOS DMG
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-macos
-          path: apps/desktop-host/src-tauri/target/release/bundle/**/*.dmg
-          if-no-files-found: error
-
-      - name: Upload Linux packages
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-linux
-          path: |
+            apps/desktop-host/src-tauri/target/release/bundle/**/*.dmg
             apps/desktop-host/src-tauri/target/release/bundle/**/*.deb
             apps/desktop-host/src-tauri/target/release/bundle/**/*.AppImage
           if-no-files-found: error
+          compression-level: 0   
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
-      - name: Download bundles
-        uses: actions/download-artifact@v4
+      - name: Download all bundles
+        uses: actions/download-artifact@v8
         with:
           path: release
           pattern: tauri-*
           merge-multiple: true
 
-      - name: List files
+      - name: List downloaded files
         run: find release -type f
 
       - name: Publish release
@@ -135,51 +118,43 @@ jobs:
         run: |
           set -e
           REPO="${{ github.repository }}"
-
           VERSION=$(node -p "require('./apps/desktop-host/package.json').version")
+
           if [ "$REF_NAME" = "dev" ]; then
-            TITLE="${VERSION}-dev"
             TAG="v${VERSION}-dev"
-            VER_LABEL="${VERSION}-dev"
-            PRERELEASE=(--prerelease)
+            TITLE="${VERSION}-dev"
+            PRERELEASE="--prerelease"
           else
-            TITLE="${VERSION}"
             TAG="v${VERSION}"
-            VER_LABEL="${VERSION}"
-            PRERELEASE=()
+            TITLE="${VERSION}"
+            PRERELEASE=""
           fi
 
+          # Удаляем старый релиз с этим тегом (если есть)
           gh release delete "$TAG" --repo "$REPO" --yes 2>/dev/null || true
-          gh api --method DELETE -H "Accept: application/vnd.github+json" \
-            "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
+          gh api --method DELETE "/repos/$REPO/git/refs/tags/$TAG" 2>/dev/null || true
 
-          mapfile -t FILES_RAW < <(find release -type f \( \
-            -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' \
-          \) | sort)
-          if [ ${#FILES_RAW[@]} -eq 0 ]; then
-            echo "No installer files (.dmg/.exe/.msi/.deb/.AppImage) under release/"; exit 1
-          fi
-
+          # Собираем файлы
           mkdir -p release-upload
-          for f in "${FILES_RAW[@]}"; do
-            case "${f,,}" in
-              *.dmg) out="HockeyDesktopHostMacOS${VER_LABEL}.dmg" ;;
-              *.exe) out="HockeyDesktopHostWindows${VER_LABEL}.exe" ;;
-              *.msi) out="HockeyDesktopHostWindows${VER_LABEL}.msi" ;;
-              *.deb) out="HockeyDesktopHostLinux${VER_LABEL}.deb" ;;
-              *.appimage) out="HockeyDesktopHostLinux${VER_LABEL}.AppImage" ;;
-              *) out="HockeyDesktopHost_${VER_LABEL}_$(basename "$f")" ;;
+          find release -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) | while read -r f; do
+            basename=$(basename "$f")
+            case "${basename,,}" in
+              *.dmg)   out="HockeyDesktopHost_MacOS_${VERSION}.dmg" ;;
+              *.exe)   out="HockeyDesktopHost_Windows_${VERSION}.exe" ;;
+              *.msi)   out="HockeyDesktopHost_Windows_${VERSION}.msi" ;;
+              *.deb)   out="HockeyDesktopHost_Linux_${VERSION}.deb" ;;
+              *.appimage) out="HockeyDesktopHost_Linux_${VERSION}.AppImage" ;;
+              *)       out="HockeyDesktopHost_${VERSION}_${basename}" ;;
             esac
             cp "$f" "release-upload/$out"
           done
-          mapfile -t FILES < <(find release-upload -maxdepth 1 -type f | sort)
 
-          NOTES="Сборки для Windows, Linux и macOS. Версия: ${VER_LABEL}."
+          NOTES="Автоматическая сборка Tauri приложения.\nВерсия: ${VERSION} (${REF_NAME})"
 
           gh release create "$TAG" \
             --repo "$REPO" \
             --target "${{ github.sha }}" \
             --title "$TITLE" \
             --notes "$NOTES" \
-            "${PRERELEASE[@]}" \
-            "${FILES[@]}"
+            $PRERELEASE \
+            release-upload/*
