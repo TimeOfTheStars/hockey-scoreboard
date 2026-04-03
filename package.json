@@ -3,10 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "dev:frontend": "npm --prefix frontend run dev",
-    "dev:backend": "python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir backend",
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "build": "npm --prefix frontend run build"
+    "dev:obs-overlay": "npm --prefix apps/obs-overlay run dev",
+    "dev:desktop": "npm --prefix apps/desktop-host run tauri:dev",
+    "build:obs-overlay": "npm --prefix apps/obs-overlay run build",
+    "build:desktop": "npm --prefix apps/desktop-host run tauri:build",
+    "dev": "npm run dev:desktop",
+    "build": "npm run build:obs-overlay && npm --prefix apps/desktop-host run build"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
