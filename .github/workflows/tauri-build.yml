@@ -1,0 +1,91 @@
+# Сборка установщиков Tauri на Windows, Linux (deb/AppImage) и macOS (.app/.dmg).
+# Артефакты: Actions → запуск workflow → Artifacts (по одному на каждую ОС).
+
+name: Tauri build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/desktop-host/**"
+      - "apps/obs-overlay/**"
+      - "packages/shared/**"
+      - ".github/workflows/tauri-build.yml"
+
+concurrency:
+  group: tauri-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-22.04
+          - os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            apps/desktop-host/package-lock.json
+            apps/obs-overlay/package-lock.json
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-host/src-tauri
+
+      - name: Install npm dependencies (obs-overlay)
+        run: npm ci
+        working-directory: apps/obs-overlay
+
+      - name: Install npm dependencies (desktop-host)
+        run: npm ci
+        working-directory: apps/desktop-host
+
+      - name: Tauri build
+        run: npx tauri build
+        working-directory: apps/desktop-host
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: hockey-desktop-host-${{ matrix.os }}
+          path: apps/desktop-host/src-tauri/target/release/bundle/
+          if-no-files-found: error
