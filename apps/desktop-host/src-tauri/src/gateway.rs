@@ -2,6 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tauri::path::BaseDirectory;
+use tauri::AppHandle;
+use tauri::Manager;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -64,17 +67,26 @@ pub fn merge_external_payload(raw: Value) -> Value {
     shallow_merge(default_state_value(), &patch)
 }
 
-fn overlay_dist_path() -> Result<PathBuf, String> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../obs-overlay/dist");
-    let index = dir.join("index.html");
-    if index.is_file() {
-        Ok(dir)
-    } else {
-        Err(format!(
-            "Не найден {}. Сначала: npm --prefix apps/obs-overlay run build",
-            index.display()
-        ))
+fn overlay_dist_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let bundled = app
+        .path()
+        .resolve("obs-overlay-dist", BaseDirectory::Resource)
+        .map_err(|e| format!("путь к ресурсам Tauri: {e}"))?;
+    if bundled.join("index.html").is_file() {
+        return Ok(bundled);
     }
+
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../obs-overlay/dist");
+    let index = dev.join("index.html");
+    if index.is_file() {
+        return Ok(dev);
+    }
+
+    Err(format!(
+        "Не найден OBS-оверлей (index.html). Ожидалось: {} или dev {}. Собери: npm --prefix apps/obs-overlay run build",
+        bundled.display(),
+        index.display()
+    ))
 }
 
 #[derive(Clone)]
@@ -202,15 +214,23 @@ impl GatewayController {
         Ok(())
     }
 
-    pub async fn start(&mut self, api_url: String, port: u16) -> Result<String, String> {
-        if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
-            return Err("URL должен начинаться с http:// или https://".to_string());
+    pub async fn start(
+        &mut self,
+        app_handle: &AppHandle,
+        api_url: String,
+        port: u16,
+        test_mode: bool,
+    ) -> Result<String, String> {
+        if !test_mode {
+            if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
+                return Err("URL должен начинаться с http:// или https://".to_string());
+            }
         }
         if self.cancel.is_some() {
             self.stop().await?;
         }
 
-        let dist = overlay_dist_path()?;
+        let dist = overlay_dist_path(app_handle)?;
         let dist = std::fs::canonicalize(&dist).map_err(|e| format!("canonicalize dist: {e}"))?;
         if !dist.as_path().join("index.html").is_file() {
             return Err("В obs-overlay/dist нет index.html".to_string());
@@ -229,27 +249,31 @@ impl GatewayController {
             state: state.clone(),
             tx: tx.clone(),
         };
-        let app = router(inner, dist);
+        let axum_app = router(inner, dist);
 
         let token = CancellationToken::new();
         let token_serve = token.clone();
         let server_task = tokio::spawn(async move {
-            axum::serve(listener, app)
+            axum::serve(listener, axum_app)
                 .with_graceful_shutdown(async move {
                     token_serve.cancelled().await;
                 })
                 .await
         });
 
-        let poll_cancel = token.clone();
-        let api_for_poll = api_url.clone();
-        let poller_task = tokio::spawn(async move {
-            poll_loop(api_for_poll, state, tx, poll_cancel).await;
-        });
+        let poller_task = if test_mode {
+            None
+        } else {
+            let poll_cancel = token.clone();
+            let api_for_poll = api_url;
+            Some(tokio::spawn(async move {
+                poll_loop(api_for_poll, state, tx, poll_cancel).await;
+            }))
+        };
 
         self.cancel = Some(token);
         self.server_task = Some(server_task);
-        self.poller_task = Some(poller_task);
+        self.poller_task = poller_task;
 
         Ok(format!("http://127.0.0.1:{}/", bound.port()))
     }

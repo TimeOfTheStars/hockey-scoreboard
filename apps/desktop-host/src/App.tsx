@@ -7,9 +7,12 @@ import { parseExternalStatePayload } from "./shared/parseExternalState";
 
 type ValidateState = "idle" | "validating" | "ready" | "error";
 
+/** Порт и URL по умолчанию для режима «Тест» (без внешнего API). */
+const DEFAULT_GATEWAY_PORT = 8787;
+
 export default function App() {
   const [apiUrl, setApiUrl] = useState<string>("http://10.7.16.210:8080/api/vmix");
-  const [localPort, setLocalPort] = useState<number>(8787);
+  const [localPort, setLocalPort] = useState<number>(DEFAULT_GATEWAY_PORT);
   const [validateState, setValidateState] = useState<ValidateState>("idle");
   const [error, setError] = useState<string>("");
   const [preview, setPreview] = useState<GameState>(defaultGameState);
@@ -63,9 +66,31 @@ export default function App() {
       const url = await invoke<string>("start_score_gateway", {
         apiUrl: apiUrl.trim(),
         port: localPort,
+        testMode: false,
       });
       setObsUrl(url);
       setServerRunning(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const onTestServer = async () => {
+    if (serverRunning) {
+      return;
+    }
+    setError("");
+    try {
+      const url = await invoke<string>("start_score_gateway", {
+        apiUrl: "",
+        port: DEFAULT_GATEWAY_PORT,
+        testMode: true,
+      });
+      setLocalPort(DEFAULT_GATEWAY_PORT);
+      setObsUrl(url);
+      setServerRunning(true);
+      setPreview(defaultGameState);
+      setValidateState("idle");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -110,7 +135,7 @@ export default function App() {
                 value={localPort}
                 min={1024}
                 max={65535}
-                onChange={(e) => setLocalPort(Number(e.target.value) || 8787)}
+                onChange={(e) => setLocalPort(Number(e.target.value) || DEFAULT_GATEWAY_PORT)}
                 disabled={serverRunning}
               />
             </label>
@@ -134,6 +159,15 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className="rounded bg-amber-800 px-3 py-2 text-sm hover:bg-amber-700 disabled:opacity-50"
+                onClick={() => void onTestServer()}
+                disabled={serverRunning}
+                title={`Поднять gateway на порту ${DEFAULT_GATEWAY_PORT} без опроса API (стартовое состояние табло)`}
+              >
+                Тест
+              </button>
+              <button
+                type="button"
                 className="rounded border border-zinc-600 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-50"
                 onClick={() => void onStopServer()}
                 disabled={!serverRunning}
@@ -154,8 +188,11 @@ export default function App() {
             ) : null}
 
             <p className="text-xs text-zinc-400">
-              Проверка данных и polling идут из нативного приложения (без CORS). Перед запуском должен быть собран
-              оверлей: <code className="text-zinc-300">npm run build:overlay</code> (Tauri делает это в beforeDev).
+              <strong className="font-medium text-zinc-300">Тест</strong> — тот же локальный сервер и ссылка для OBS,
+              без внешнего API: в табло остаётся стартовое состояние, удобно проверить раздачу оверлея и WebSocket.
+              Порт <code className="text-zinc-300">{DEFAULT_GATEWAY_PORT}</code>. Проверка данных и polling идут из
+              нативного приложения (без CORS). Оверлей:{" "}
+              <code className="text-zinc-300">npm run build:overlay</code> (Tauri в beforeDev).
             </p>
           </div>
 

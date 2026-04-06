@@ -9,12 +9,15 @@ pub type GatewayHandle = Arc<Mutex<gateway::GatewayController>>;
 
 #[tauri::command]
 async fn start_score_gateway(
+    app: tauri::AppHandle,
     gateway: State<'_, GatewayHandle>,
     api_url: String,
     port: u16,
+    test_mode: Option<bool>,
 ) -> Result<String, String> {
     let mut g = gateway.lock().await;
-    g.start(api_url.trim().to_string(), port).await
+    let test = test_mode.unwrap_or(false);
+    g.start(&app, api_url.trim().to_string(), port, test).await
 }
 
 #[tauri::command]
