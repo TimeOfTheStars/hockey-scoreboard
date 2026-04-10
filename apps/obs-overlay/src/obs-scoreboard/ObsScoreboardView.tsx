@@ -72,8 +72,20 @@ export function ObsScoreboardView({ state, variant = "full" }: { state: GameStat
   const scorebug = (
     <section
       className="inline-block overflow-hidden rounded-none border-2 border-black shadow-none"
-      style={{ fontFamily: '"Roboto Condensed", "Arial Narrow", Impact, system-ui, sans-serif' }}
+      style={{ fontFamily: '"Teko", "Roboto Condensed", "Arial Narrow", Impact, system-ui, sans-serif' }}
     >
+      {state.BrandingImage.trim() ? (
+        <div
+          className="flex h-8 items-center justify-end gap-2 border-b-2 px-2"
+          style={{ backgroundColor: C.dark, borderColor: C.line }}
+        >
+          <img
+            src={resolveLogoSrc(state.BrandingImage.trim())}
+            alt=""
+            className="max-h-7 w-auto max-w-[120px] object-contain object-right"
+          />
+        </div>
+      ) : null}
       <div
         className="grid"
         style={{
